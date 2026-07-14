@@ -6,14 +6,58 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/render"
 	"github.com/google/uuid"
+	"github.com/praetordev/events"
 	"github.com/praetordev/ingestion/core"
-	"github.com/praetordev/models"
 	praetorRender "github.com/praetordev/render"
 )
+
+// JobEventRequest is the ingestion-owned HTTP wire contract. It is deliberately
+// separate from database models so schema refactors cannot silently change what
+// independently released host-runners and reconcilers send.
+type JobEventRequest struct {
+	ExecutionRunID uuid.UUID       `json:"execution_run_id"`
+	UnifiedJobID   int64           `json:"unified_job_id"`
+	Seq            int64           `json:"seq"`
+	EventType      string          `json:"event_type"`
+	Timestamp      time.Time       `json:"timestamp"`
+	Host           *string         `json:"host,omitempty"`
+	TaskName       *string         `json:"task_name,omitempty"`
+	PlayName       *string         `json:"play_name,omitempty"`
+	StdoutSnippet  *string         `json:"stdout_snippet,omitempty"`
+	EventData      json.RawMessage `json:"event_data,omitempty"`
+}
+
+func (e JobEventRequest) event() events.JobEvent {
+	return events.JobEvent{
+		ExecutionRunID: e.ExecutionRunID,
+		UnifiedJobID:   e.UnifiedJobID,
+		Seq:            e.Seq,
+		EventType:      e.EventType,
+		Timestamp:      e.Timestamp,
+		Host:           e.Host,
+		TaskName:       e.TaskName,
+		PlayName:       e.PlayName,
+		StdoutSnippet:  e.StdoutSnippet,
+		EventData:      e.EventData,
+	}
+}
+
+func decodeJobEvents(r io.Reader) ([]events.JobEvent, error) {
+	var requests []JobEventRequest
+	if err := json.NewDecoder(r).Decode(&requests); err != nil {
+		return nil, err
+	}
+	decoded := make([]events.JobEvent, len(requests))
+	for i, request := range requests {
+		decoded[i] = request.event()
+	}
+	return decoded, nil
+}
 
 type IngestionHandler struct {
 	Service *core.IngestionService
@@ -120,8 +164,8 @@ func (h *IngestionHandler) Ingest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var events []models.JobEvent
-	if err := json.NewDecoder(r.Body).Decode(&events); err != nil {
+	events, err := decodeJobEvents(r.Body)
+	if err != nil {
 		praetorRender.ErrInvalidRequest(err).Render(w, r)
 		return
 	}
