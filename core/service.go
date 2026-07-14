@@ -15,7 +15,6 @@ import (
 	"github.com/praetordev/credentials"
 	"github.com/praetordev/events"
 	"github.com/praetordev/ingestion/inventoryrender"
-	"github.com/praetordev/models"
 	"github.com/praetordev/objectstore"
 )
 
@@ -346,7 +345,7 @@ func (s *IngestionService) IngestLogChunk(ctx context.Context, runID uuid.UUID, 
 // DB lookup and keeps accepting events — buffering them in JetStream — even while
 // Postgres is down (#16). The on-target WAL plus JetStream, not a DB round-trip,
 // are the real durability buffer.
-func (s *IngestionService) IngestEvents(ctx context.Context, runID uuid.UUID, eventsList []models.JobEvent) error {
+func (s *IngestionService) IngestEvents(ctx context.Context, runID uuid.UUID, eventsList []events.JobEvent) error {
 	if len(eventsList) == 0 {
 		return nil
 	}
@@ -355,26 +354,15 @@ func (s *IngestionService) IngestEvents(ctx context.Context, runID uuid.UUID, ev
 	for _, event := range eventsList {
 		// The run id comes from the authenticated URL, not the event body.
 		event.ExecutionRunID = runID
-		if event.CreatedAt.IsZero() {
-			event.CreatedAt = time.Now()
+		if event.Timestamp.IsZero() {
+			event.Timestamp = time.Now()
 		}
 		// Ensure EventData is valid JSON for the downstream JSONB column.
 		if len(event.EventData) == 0 {
 			event.EventData = json.RawMessage("{}")
 		}
 
-		natsEvent := &events.JobEvent{
-			ExecutionRunID: event.ExecutionRunID,
-			EventType:      event.EventType,
-			Seq:            event.Seq,
-			Timestamp:      event.CreatedAt,
-			TaskName:       event.TaskName,
-			PlayName:       event.PlayName,
-			StdoutSnippet:  event.StdoutSnippet,
-			EventData:      event.EventData,
-		}
-
-		if err := s.Publisher.PublishJobEvent(natsEvent); err != nil {
+		if err := s.Publisher.PublishJobEvent(&event); err != nil {
 			logger.Error("publish event to NATS failed", "err", err)
 			return fmt.Errorf("failed to publish event to NATS: %w", err)
 		}
