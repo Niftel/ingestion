@@ -155,39 +155,9 @@ func (s *IngestionService) StoreFacts(ctx context.Context, runID uuid.UUID, fact
 // updates in place). Host names that already exist keep their id; new ones are
 // inserted. Variables come from _meta.hostvars.
 func (s *IngestionService) UpsertInventory(ctx context.Context, inventoryID int64, data []byte) error {
-	var inv map[string]json.RawMessage
-	if err := json.Unmarshal(data, &inv); err != nil {
-		return fmt.Errorf("parse inventory json: %w", err)
-	}
-
-	hostvars := map[string]json.RawMessage{}
-	if meta, ok := inv["_meta"]; ok {
-		var m struct {
-			HostVars map[string]json.RawMessage `json:"hostvars"`
-		}
-		_ = json.Unmarshal(meta, &m)
-		hostvars = m.HostVars
-	}
-
-	allHosts := map[string]bool{}
-	groups := map[string][]string{} // real group -> hosts
-	for key, raw := range inv {
-		if key == "_meta" {
-			continue
-		}
-		var g struct {
-			Hosts []string `json:"hosts"`
-		}
-		_ = json.Unmarshal(raw, &g)
-		for _, h := range g.Hosts {
-			allHosts[h] = true
-		}
-		if key != "all" && key != "ungrouped" && len(g.Hosts) > 0 {
-			groups[key] = g.Hosts
-		}
-	}
-	for h := range hostvars {
-		allHosts[h] = true
+	hostvars, allHosts, groups, err := decodeInventorySync(data)
+	if err != nil {
+		return err
 	}
 
 	hostID := map[string]int64{}
@@ -237,6 +207,50 @@ func (s *IngestionService) UpsertInventory(ctx context.Context, inventoryID int6
 	}
 	logger.Info("inventory synced", "inventory_id", inventoryID, "hosts", len(hostID), "groups", len(groups))
 	return nil
+}
+
+func decodeInventorySync(data []byte) (map[string]json.RawMessage, map[string]bool, map[string][]string, error) {
+	var inv map[string]json.RawMessage
+	if err := json.Unmarshal(data, &inv); err != nil {
+		return nil, nil, nil, fmt.Errorf("parse inventory json: %w", err)
+	}
+
+	hostvars := map[string]json.RawMessage{}
+	if meta, ok := inv["_meta"]; ok {
+		var m struct {
+			HostVars map[string]json.RawMessage `json:"hostvars"`
+		}
+		if err := json.Unmarshal(meta, &m); err != nil {
+			return nil, nil, nil, fmt.Errorf("parse inventory _meta: %w", err)
+		}
+		if m.HostVars != nil {
+			hostvars = m.HostVars
+		}
+	}
+
+	allHosts := map[string]bool{}
+	groups := map[string][]string{}
+	for key, raw := range inv {
+		if key == "_meta" {
+			continue
+		}
+		var group struct {
+			Hosts []string `json:"hosts"`
+		}
+		if err := json.Unmarshal(raw, &group); err != nil {
+			return nil, nil, nil, fmt.Errorf("parse inventory group %q: %w", key, err)
+		}
+		for _, host := range group.Hosts {
+			allHosts[host] = true
+		}
+		if key != "all" && key != "ungrouped" && len(group.Hosts) > 0 {
+			groups[key] = group.Hosts
+		}
+	}
+	for host := range hostvars {
+		allHosts[host] = true
+	}
+	return hostvars, allHosts, groups, nil
 }
 
 // LatestLogSeq returns the highest stored chunk seq for a run, or -1 if none.
