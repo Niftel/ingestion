@@ -32,6 +32,13 @@ type JobEventRequest struct {
 	EventData      json.RawMessage `json:"event_data,omitempty"`
 }
 
+// FactCacheUpload is the host-runner-to-ingestion v1 wire contract. The outer
+// object is intentional: it leaves room for additive metadata without changing
+// the host-keyed fact map.
+type FactCacheUpload struct {
+	Facts map[string]json.RawMessage `json:"facts"`
+}
+
 func (e JobEventRequest) event() events.JobEvent {
 	return events.JobEvent{
 		ExecutionRunID: e.ExecutionRunID,
@@ -235,9 +242,7 @@ func (h *IngestionHandler) IngestFacts(w http.ResponseWriter, r *http.Request) {
 		praetorRender.ErrInvalidRequest(err).Render(w, r)
 		return
 	}
-	var body struct {
-		Facts map[string]json.RawMessage `json:"facts"`
-	}
+	var body FactCacheUpload
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		praetorRender.ErrInvalidRequest(err).Render(w, r)
 		return

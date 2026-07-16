@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/jmoiron/sqlx"
@@ -114,7 +115,13 @@ func formatHostLine(h models.Host) string {
 		vars["ansible_ssh_common_args"] = "-o StrictHostKeyChecking=no -o ControlMaster=no"
 	}
 
-	for k, v := range vars {
+	keys := make([]string, 0, len(vars))
+	for k := range vars {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		v := vars[k]
 		strVal := fmt.Sprintf("%v", v)
 		if strings.Contains(strVal, " ") {
 			sb.WriteString(fmt.Sprintf(" %s=\"%s\"", k, strVal))
